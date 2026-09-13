@@ -54,24 +54,23 @@ class AlertManager:
         gui_callback_popup_alert=None,
         sound_enabled_check_callback=None,
         get_sound_file_callback=None,
+        user_id: int | None = None,
     ):
         """
         Args:
             gui_callback_visual_alert: fn(binance_symbol, message, direction)
-                Called on the main thread to flash the coin row.
             gui_callback_popup_alert: fn(display_symbol, message, direction, loop)
-                Called on the main thread to show the flashing popup window.
             sound_enabled_check_callback: fn() -> bool
-                Returns True if sounds are enabled.
             get_sound_file_callback: fn() -> str
-                Returns the path to the chosen alert sound file.
+            user_id: logged-in user's DB id for alert history logging (optional)
         """
-        self._triggered: dict = {}  # {alert_id: True} — prevents re-firing
-        self._initialized_symbols: set = set()  # symbols that have completed startup baseline
+        self._triggered: dict = {}
+        self._initialized_symbols: set = set()
         self.gui_callback_visual_alert = gui_callback_visual_alert
         self.gui_callback_popup_alert = gui_callback_popup_alert
         self.sound_enabled_check_callback = sound_enabled_check_callback
         self.get_sound_file_callback = get_sound_file_callback
+        self._user_id = user_id
         self._mixer_ok = False
 
         try:
@@ -249,6 +248,15 @@ class AlertManager:
                 if self.gui_callback_popup_alert:
                     self.gui_callback_popup_alert(display_symbol, message, direction, loop)
 
+                # 5. Log to NeonDB alert history
+                if self._user_id:
+                    import threading as _t
+                    _t.Thread(
+                        target=self._log_to_db,
+                        args=(binance_symbol, direction, current_price, price),
+                        daemon=True
+                    ).start()
+
             elif not condition_met:
                 # Reset so it can fire again when price re-crosses the threshold
                 self._triggered.pop(alert_id, None)
@@ -265,6 +273,14 @@ class AlertManager:
             return f"{price:.4f}"
         else:
             return f"{price:.8f}"
+
+    def _log_to_db(self, symbol: str, alert_type: str, trigger_price: float, threshold: float):
+        """Background thread: log fired alert to NeonDB."""
+        try:
+            import db_manager
+            db_manager.log_alert_history(self._user_id, symbol, alert_type, trigger_price, threshold)
+        except Exception as e:
+            print(f"[AlertManager] DB log error: {e}")
 
     def reset_alerts_for_coin(self, binance_symbol: str):
         """Clear all triggered states and recalibrate baseline for a coin."""

@@ -7,13 +7,16 @@ block_cipher = None
 # Collect all necessary package resources
 ctk_datas, ctk_binaries, ctk_hiddenimports = collect_all('customtkinter')
 mpf_datas, mpf_binaries, mpf_hiddenimports = collect_all('mplfinance')
+psy_datas, psy_binaries, psy_hiddenimports = collect_all('psycopg2')
+bcrypt_datas, bcrypt_binaries, bcrypt_hiddenimports = collect_all('bcrypt')
+pil_datas, pil_binaries, pil_hiddenimports = collect_all('PIL')
 
 datas = [
     ('assets', 'assets'),
     ('kos-crypto-alert-icon.png', '.'),
-] + ctk_datas + mpf_datas
+] + ctk_datas + mpf_datas + psy_datas + bcrypt_datas + pil_datas
 
-binaries = ctk_binaries + mpf_binaries
+binaries = ctk_binaries + mpf_binaries + psy_binaries + bcrypt_binaries + pil_binaries
 
 hiddenimports = [
     'plyer.platforms.win.notification',
@@ -24,7 +27,20 @@ hiddenimports = [
     'pandas',
     'matplotlib',
     'matplotlib.backends.backend_tkagg',
-] + ctk_hiddenimports + mpf_hiddenimports
+    'psycopg2',
+    'psycopg2.extras',
+    'psycopg2.extensions',
+    'bcrypt',
+    'db_manager',
+    'auth_manager',
+    'login_screen',
+    'admin_panel',
+    'gui',
+    'config_manager',
+    'binance_client',
+    'alert_manager',
+    'icon_manager',
+] + ctk_hiddenimports + mpf_hiddenimports + psy_hiddenimports + bcrypt_hiddenimports + pil_hiddenimports
 
 a = Analysis(
     ['main.py'],

@@ -36,11 +36,20 @@ def get_alert_sound_file(config: dict) -> str:
     custom = config.get("alert_sound_path", "")
     if custom and os.path.isfile(custom):
         return custom
-    if os.path.isfile(DEFAULT_SOUND_FILE):
-        return DEFAULT_SOUND_FILE
+    # Check bundled assets first (inside sys._MEIPASS in frozen mode)
     bundled = os.path.join(BUNDLE_DIR, "assets", "allert.mp3")
     if os.path.isfile(bundled):
         return bundled
+    # Check adjacent directory
+    adjacent = os.path.join(CONFIG_DIR, "assets", "allert.mp3")
+    if os.path.isfile(adjacent):
+        return adjacent
+    bundled_wav = os.path.join(BUNDLE_DIR, "assets", "allert.wav")
+    if os.path.isfile(bundled_wav):
+        return bundled_wav
+    adjacent_wav = os.path.join(CONFIG_DIR, "assets", "allert.wav")
+    if os.path.isfile(adjacent_wav):
+        return adjacent_wav
     return DEFAULT_SOUND_FILE
 
 

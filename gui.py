@@ -27,6 +27,13 @@ from binance_client import BinanceClient
 from alert_manager import AlertManager
 from icon_manager import get_coin_icon, get_app_logo_image, APP_ICON_ICO, APP_ICON_PNG, ROOT_ICON_PNG
 
+try:
+    import db_manager
+    import auth_manager
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -1016,7 +1023,7 @@ class SuggestionDropdown:
 # App — Main Application Window
 # ═══════════════════════════════════════════════════════════════════════
 class App(ctk.CTk):
-    def __init__(self):
+    def __init__(self, current_user: dict | None = None, on_close_callback=None):
         super().__init__()
         apply_window_icon(self)
         self.title("Kanta's Crypto Alerts  ·  कान्ता क्रिप्टो अलर्ट्स")
@@ -1027,6 +1034,11 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
 
+        # Current logged-in user (from login_screen or None for legacy)
+        self.current_user = current_user or {}
+        self._user_id: int | None = current_user.get("id") if current_user else None
+        self._on_close_callback = on_close_callback
+
         self.config = load_config()
         self.binance_client = BinanceClient()
         self.alert_manager = AlertManager(
@@ -1034,6 +1046,7 @@ class App(ctk.CTk):
             gui_callback_popup_alert=self._on_popup_alert,
             sound_enabled_check_callback=lambda: self.config.get("sound_enabled", True),
             get_sound_file_callback=lambda: get_alert_sound_file(self.config),
+            user_id=self._user_id,
         )
 
         self.coin_rows: dict[str, CoinRow] = {}   # binance_symbol -> CoinRow
@@ -1081,6 +1094,47 @@ class App(ctk.CTk):
         ctk.CTkLabel(hdr, text="Binance Public API · No Key Required (बिना किसी API कुंजी के)",
                      font=ctk.CTkFont("Segoe UI", 10),
                      text_color=TEXT_SECONDARY).pack(side="left", pady=12)
+
+        # ── Logged-in user + logout (right side of header) ────────────
+        user_name = self.current_user.get("display_name", "")
+        if user_name:
+            user_frame = ctk.CTkFrame(hdr, fg_color="transparent")
+            user_frame.pack(side="right", padx=10, pady=6)
+
+            # Profile picture (if available)
+            user_avatar = None
+            try:
+                pic_bytes = self.current_user.get("profile_pic")
+                if not pic_bytes and self._user_id and DB_AVAILABLE:
+                    full_u = db_manager.get_user_by_id(self._user_id)
+                    if full_u and full_u.get("profile_pic"):
+                        pic_bytes = full_u["profile_pic"]
+                        self.current_user["profile_pic"] = pic_bytes
+                if pic_bytes:
+                    import io
+                    import PIL.ImageDraw as ImageDraw
+                    im = Image.open(io.BytesIO(bytes(pic_bytes))).convert("RGBA").resize((30, 30), Image.LANCZOS)
+                    mask = Image.new("L", (30, 30), 0)
+                    ImageDraw.Draw(mask).ellipse((0, 0, 30, 30), fill=255)
+                    im.putalpha(mask)
+                    user_avatar = ctk.CTkImage(im, size=(30, 30))
+            except Exception:
+                pass
+
+            if user_avatar:
+                ctk.CTkLabel(user_frame, image=user_avatar, text="").pack(side="left", padx=(0, 6))
+
+            ctk.CTkLabel(user_frame,
+                         text=f"{'👤 ' if not user_avatar else ''}{user_name}",
+                         font=ctk.CTkFont("Segoe UI", 11, "bold"),
+                         text_color=ACCENT_BLUE).pack(side="left", padx=(0, 8))
+            ctk.CTkButton(user_frame, text="🚪 Logout",
+                          width=75, height=28,
+                          font=ctk.CTkFont("Segoe UI", 10),
+                          fg_color=BTN_DEFAULT, hover_color="#3d0f14",
+                          text_color=ACCENT_RED,
+                          corner_radius=6,
+                          command=self._logout).pack(side="left")
 
         # ── Search / Add Coin (Bilingual) ──────────────────────────────
         search_frame = ctk.CTkFrame(self, fg_color=BG_PANEL, corner_radius=8)
@@ -1345,6 +1399,7 @@ class App(ctk.CTk):
         }
         self.config["watched_coins"].append(new_coin)
         save_config(self.config)
+        self._sync_coins_to_db()
 
         self._add_coin_row(new_coin, row_index=len(self.coin_rows))
         self.search_entry.delete(0, tk.END)
@@ -1360,9 +1415,19 @@ class App(ctk.CTk):
     # ──────────────────────────────────────────────────────────────────
 
     def _load_coins_to_gui(self):
+        """Load coins from DB if logged in, else fall back to local config."""
         for widget in self.coins_frame.winfo_children():
             widget.destroy()
         self.coin_rows.clear()
+
+        if self._user_id and DB_AVAILABLE:
+            try:
+                db_coins = db_manager.load_watched_coins(self._user_id)
+                if db_coins:
+                    self.config["watched_coins"] = db_coins
+                    print(f"[App] Loaded {len(db_coins)} coins from DB for user {self._user_id}")
+            except Exception as e:
+                print(f"[App] DB load error, using local config: {e}")
 
         for i, coin in enumerate(self.config.get("watched_coins", [])):
             self._add_coin_row(coin, row_index=i)
@@ -1398,6 +1463,7 @@ class App(ctk.CTk):
             if c.get("symbol") != binance_symbol
         ]
         save_config(self.config)
+        self._sync_coins_to_db()
 
         if binance_symbol in self.coin_rows:
             self.coin_rows[binance_symbol].destroy()
@@ -1415,6 +1481,7 @@ class App(ctk.CTk):
     def _open_alerts_dialog(self, coin_config: dict):
         def _on_save():
             save_config(self.config)
+            self._sync_coins_to_db()
             sym = coin_config.get("symbol")
             if sym and sym in self.coin_rows:
                 self.coin_rows[sym].update_alert_count()
@@ -1534,7 +1601,32 @@ class App(ctk.CTk):
     # Lifecycle
     # ──────────────────────────────────────────────────────────────────
 
-    def _on_close(self):
+    def _logout(self):
+        """Logout current user, clear local session, go back to login screen."""
+        self._on_close(skip_callback=True)
+        if DB_AVAILABLE:
+            auth_manager.clear_local_session()
+        from login_screen import LoginScreen
+        ls = LoginScreen()
+        ls.mainloop()
+
+    def _sync_coins_to_db(self):
+        """Push current watchlist and alerts to NeonDB for the logged-in user."""
+        if not self._user_id or not DB_AVAILABLE:
+            return
+        try:
+            db_manager.save_watched_coins(self._user_id, self.config.get("watched_coins", []))
+        except Exception as e:
+            print(f"[App] DB sync error: {e}")
+
+    def _on_close(self, skip_callback: bool = False):
         self._stop_event.set()
         self.alert_manager.stop_sound()
+        save_config(self.config)
+        self._sync_coins_to_db()
         self.destroy()
+        if not skip_callback and self._on_close_callback:
+            try:
+                self._on_close_callback()
+            except Exception:
+                pass

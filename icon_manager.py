@@ -21,11 +21,17 @@ else:
 
 BUNDLE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
 
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-COIN_ICONS_DIR = os.path.join(ASSETS_DIR, "coin_icons")
-APP_ICON_PNG = os.path.join(ASSETS_DIR, "app_icon.png")
-ROOT_ICON_PNG = os.path.join(BASE_DIR, "kos-crypto-alert-icon.png")
-APP_ICON_ICO = os.path.join(ASSETS_DIR, "app_icon.ico")
+def _find_asset(rel_path: str) -> str:
+    p = os.path.join(BUNDLE_DIR, rel_path)
+    if os.path.exists(p):
+        return p
+    return os.path.join(BASE_DIR, rel_path)
+
+ASSETS_DIR = _find_asset("assets")
+COIN_ICONS_DIR = os.path.join(BASE_DIR, "assets", "coin_icons")
+APP_ICON_PNG = _find_asset(os.path.join("assets", "app_icon.png"))
+ROOT_ICON_PNG = _find_asset("kos-crypto-alert-icon.png")
+APP_ICON_ICO = _find_asset(os.path.join("assets", "app_icon.ico"))
 
 os.makedirs(COIN_ICONS_DIR, exist_ok=True)
 

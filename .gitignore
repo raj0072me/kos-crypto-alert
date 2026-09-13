@@ -17,6 +17,7 @@ dist/
 
 # App-generated files
 config.json
+session.json
 assets/coin_icons/
 
 # Dev/temp files
