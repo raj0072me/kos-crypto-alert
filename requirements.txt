@@ -1,4 +1,7 @@
 customtkinter
 requests
 pygame
-matplotlib 
+matplotlib
+mplfinance
+plyer
+pandas

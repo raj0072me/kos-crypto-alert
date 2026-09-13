@@ -1,195 +1,278 @@
+"""
+alert_manager.py
+----------------
+Manages price alert logic with:
+- Multiple alerts per coin (list-based, not just one above/one below)
+- System tray notifications via plyer (works when app is minimized)
+- Audio alerts via pygame
+- Looping alert popup windows (created on the main thread via callback)
+"""
+
 import pygame
 import os
 import threading
 
-# Path to the sound file
-# We assume alert_manager.py is in the same directory as assets/ and the main scripts
-sound_file = os.path.join(os.path.dirname(__file__), "assets", "allert.mp3")
+try:
+    from plyer import notification as _plyer_notif
+    PLYER_AVAILABLE = True
+except ImportError:
+    PLYER_AVAILABLE = False
+    print("[AlertManager] plyer not found — system notifications disabled.")
+
+# Default assets
+import sys
+
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+BUNDLE_DIR = getattr(sys, "_MEIPASS", BASE_DIR)
+
+DEFAULT_SOUND_FILE = os.path.join(BASE_DIR, "assets", "allert.mp3")
+if not os.path.isfile(DEFAULT_SOUND_FILE):
+    bundled_sound = os.path.join(BUNDLE_DIR, "assets", "allert.mp3")
+    if os.path.isfile(bundled_sound):
+        DEFAULT_SOUND_FILE = bundled_sound
+
+APP_ICON_ICO = os.path.join(BASE_DIR, "assets", "app_icon.ico")
+if not os.path.isfile(APP_ICON_ICO):
+    bundled_ico = os.path.join(BUNDLE_DIR, "assets", "app_icon.ico")
+    if os.path.isfile(bundled_ico):
+        APP_ICON_ICO = bundled_ico
+
 
 class AlertManager:
-    def __init__(self, gui_callback_visual_alert=None, sound_enabled_check_callback=None):
+    """
+    Checks price conditions against a coin's alerts list and triggers
+    audio, visual, system, and popup notifications as appropriate.
+    """
+
+    def __init__(
+        self,
+        gui_callback_visual_alert=None,
+        gui_callback_popup_alert=None,
+        sound_enabled_check_callback=None,
+        get_sound_file_callback=None,
+    ):
         """
         Args:
-            gui_callback_visual_alert (function, optional): GUI function to display a visual alert.
-                                                            Should accept (symbol, message, alert_type ['above'/'below'/'error'])
-            sound_enabled_check_callback (function, optional): Function that returns True if sounds are enabled, otherwise False.
+            gui_callback_visual_alert: fn(binance_symbol, message, direction)
+                Called on the main thread to flash the coin row.
+            gui_callback_popup_alert: fn(display_symbol, message, direction, loop)
+                Called on the main thread to show the flashing popup window.
+            sound_enabled_check_callback: fn() -> bool
+                Returns True if sounds are enabled.
+            get_sound_file_callback: fn() -> str
+                Returns the path to the chosen alert sound file.
         """
-        self.triggered_alerts = {} # Stores whether an alert for a given coin and type (above/below) has already been triggered
-                                   # e.g., {"BTC_above_40000": True}
+        self._triggered: dict = {}  # {alert_id: True} — prevents re-firing
+        self._initialized_symbols: set = set()  # symbols that have completed startup baseline
         self.gui_callback_visual_alert = gui_callback_visual_alert
+        self.gui_callback_popup_alert = gui_callback_popup_alert
         self.sound_enabled_check_callback = sound_enabled_check_callback
-        
-        # Initialize pygame mixer
+        self.get_sound_file_callback = get_sound_file_callback
+        self._mixer_ok = False
+
         try:
             pygame.mixer.init()
-            print("Pygame mixer initialized.")
+            self._mixer_ok = True
+            print("[AlertManager] Pygame mixer initialized.")
         except pygame.error as e:
-            print(f"Error initializing pygame mixer: {e}")
-            # Optionally, notify GUI about this critical error
-            if self.gui_callback_visual_alert:
-                self.gui_callback_visual_alert("Sound System Error", f"Pygame mixer init failed: {e}", "error")
-            # Sound will not work if mixer fails to init
-            self._mixer_initialized = False 
-        else:
-            self._mixer_initialized = True
+            print(f"[AlertManager] Pygame mixer init failed: {e}")
 
-    def play_alert_sound(self):
-        if not self._mixer_initialized:
-            print("Pygame mixer not initialized. Cannot play sound.")
+    # ------------------------------------------------------------------
+    # Sound
+    # ------------------------------------------------------------------
+
+    def play_sound_once(self):
+        """Play the configured alert sound once in a daemon thread."""
+        if not self._mixer_ok:
             return
-            
-        if not self.sound_enabled_check_callback or not self.sound_enabled_check_callback():
-            # print("Sound alerts are disabled in config.")
+        if self.sound_enabled_check_callback and not self.sound_enabled_check_callback():
             return
 
-        if not os.path.exists(sound_file):
-            print(f"Alert sound file not found: {sound_file}")
-            if self.gui_callback_visual_alert:
-                self.gui_callback_visual_alert("Sound Error", f"File not found: {os.path.basename(sound_file)}", "error")
+        sound_file = None
+        if self.get_sound_file_callback:
+            try:
+                sound_file = self.get_sound_file_callback()
+            except Exception:
+                sound_file = None
+
+        if not sound_file or not os.path.isfile(sound_file):
+            sound_file = DEFAULT_SOUND_FILE
+
+        if not os.path.isfile(sound_file):
+            print(f"[AlertManager] Sound file not found: {sound_file}")
             return
 
+        t = threading.Thread(target=self._do_play, args=(sound_file,), daemon=True)
+        t.start()
+
+    def _do_play(self, sound_file: str):
         try:
-            # Using a thread to prevent GUI freeze, though pygame.mixer.Sound.play() is generally non-blocking
-            # However, loading the sound might take a moment, so keeping the thread is safer.
-            sound_thread = threading.Thread(target=self._actually_play_sound, args=(sound_file,))
-            sound_thread.daemon = True
-            sound_thread.start()
-        except Exception as e: # Broad exception for unforeseen issues during thread start
-            print(f"Error initiating sound playback thread: {e}")
-            if self.gui_callback_visual_alert:
-                 self.gui_callback_visual_alert("Sound Error", f"Playback thread error: {e}", "error")
+            sound = pygame.mixer.Sound(sound_file)
+            sound.play()
+        except Exception as e:
+            print(f"[AlertManager] Sound playback error ({sound_file}): {e}")
 
-    def _actually_play_sound(self, sound_file_path):
-        if not self._mixer_initialized:
-            return # Guard against playing if mixer failed
+    def stop_sound(self):
+        """Immediately stop all currently playing audio across all mixer channels."""
+        if self._mixer_ok:
+            try:
+                pygame.mixer.stop()
+            except Exception as e:
+                print(f"[AlertManager] Stop sound error: {e}")
 
-        try:
-            # pygame.mixer.Sound can raise an error if the file is not found or format is bad
-            alert_sound = pygame.mixer.Sound(sound_file_path)
-            alert_sound.play()
-        except pygame.error as e: # Specific pygame errors
-            print(f"Error playing sound '{sound_file_path}' with pygame: {e}")
-            if self.gui_callback_visual_alert: # Notify GUI if possible
-                 self.gui_callback_visual_alert("Sound Error", f"Pygame playback error: {e}", "error")
-        except Exception as e: # Other potential errors
-            print(f"Unexpected error playing sound '{sound_file_path}': {e}")
-            if self.gui_callback_visual_alert:
-                 self.gui_callback_visual_alert("Sound Error", f"Unexpected playback error: {e}", "error")
+    # ------------------------------------------------------------------
+    # System notification
+    # ------------------------------------------------------------------
 
-    def check_and_trigger_alerts(self, coin_symbol, coin_id, current_price, coin_config):
-        """Checks and triggers alerts for the given cryptocurrency.
+    def _send_system_notification(self, title: str, message: str):
+        """Send a Windows toast / desktop notification (works when minimized)."""
+        if not PLYER_AVAILABLE:
+            return
+
+        def _notify():
+            try:
+                kwargs = {
+                    "title": title,
+                    "message": message,
+                    "app_name": "Kanta's Crypto Alerts",
+                    "timeout": 8,
+                }
+                if os.path.exists(APP_ICON_ICO):
+                    kwargs["app_icon"] = APP_ICON_ICO
+                _plyer_notif.notify(**kwargs)
+            except Exception as e:
+                print(f"[AlertManager] Notification error: {e}")
+
+        t = threading.Thread(target=_notify, daemon=True)
+        t.start()
+
+    # ------------------------------------------------------------------
+    # Core: Check and trigger alerts
+    # ------------------------------------------------------------------
+
+    def check_and_trigger_alerts(
+        self,
+        display_symbol: str,
+        binance_symbol: str,
+        current_price: float,
+        coin_config: dict,
+    ):
+        """
+        Evaluate every alert in coin_config['alerts'] against current_price.
+        Triggers only once per threshold crossing; resets when price moves back.
 
         Args:
-            coin_symbol (str): Cryptocurrency symbol (e.g., "BTC").
-            coin_id (int): Cryptocurrency ID from CoinMarketCap.
-            current_price (float): Current price of the cryptocurrency.
-            coin_config (dict): Configuration for the given cryptocurrency, e.g.:
-                { "symbol": "BTC", "id": 1, "alert_above": 50000, "alert_below": 30000, "alert_active": True }
+            display_symbol:  e.g. "BTC"
+            binance_symbol:  e.g. "BTCUSDT"
+            current_price:   current market price (USDT)
+            coin_config:     coin dict from config, must contain 'alerts' list
         """
-        if not coin_config.get("alert_active") or current_price is None:
+        if current_price is None:
             return
 
-        alert_key_base = f"{coin_symbol}_{coin_id}" # Unique key for the coin
+        is_first_check = binance_symbol not in self._initialized_symbols
+        if is_first_check:
+            self._initialized_symbols.add(binance_symbol)
 
-        # Check upper limit
-        alert_above_price = coin_config.get("alert_above")
-        if alert_above_price is not None and current_price > alert_above_price:
-            alert_id = f"{alert_key_base}_above_{alert_above_price}"
-            if not self.triggered_alerts.get(alert_id):
-                message = f"{coin_symbol} has exceeded the price of ${alert_above_price:,.2f}! Current price: ${current_price:,.2f}"
-                print(f"ALERT: {message}")
-                if self.sound_enabled_check_callback and self.sound_enabled_check_callback():
-                    self.play_alert_sound()
+        alerts = coin_config.get("alerts", [])
+        for alert in alerts:
+            if not alert.get("active", True):
+                continue
+
+            alert_id = alert.get("id", f"{binance_symbol}_{alert.get('price')}_{alert.get('direction')}")
+            price = alert.get("price")
+            direction = alert.get("direction", "above")
+            loop = alert.get("loop", False)
+            label = alert.get("label", "")
+
+            if price is None:
+                continue
+
+            # Check condition
+            condition_met = (
+                (direction == "above" and current_price > price) or
+                (direction == "below" and current_price < price)
+            )
+
+            # Option 1: Startup baseline calibration
+            # If this is the first price check since app launch and the condition is ALREADY met,
+            # silently mark it as triggered so opening the app never blasts existing alerts.
+            # It will trigger once the price moves back and crosses again while the app is open.
+            if is_first_check:
+                if condition_met:
+                    self._triggered[alert_id] = True
+                    print(
+                        f"[AlertManager] Startup baseline: {display_symbol} is already {direction} "
+                        f"{price} USDT (current: {current_price} USDT). Silently calibrated — will alert on next active crossing."
+                    )
+                continue
+
+            if condition_met and not self._triggered.get(alert_id):
+                # Mark as triggered
+                self._triggered[alert_id] = True
+
+                # Build message
+                arrow = "📈" if direction == "above" else "📉"
+                verb = "exceeded" if direction == "above" else "dropped below"
+                price_str = self._fmt(current_price)
+                target_str = self._fmt(price)
+                message = (
+                    f"{arrow} {display_symbol} {verb} {target_str} USDT\n"
+                    f"Current price: {price_str} USDT"
+                )
+                if label:
+                    message = f"[{label}] {message}"
+
+                try:
+                    print(f"[ALERT] {message.replace(chr(10), ' ')}")
+                except UnicodeEncodeError:
+                    print(f"[ALERT] {display_symbol} {verb} {target_str} USDT (Current: {price_str} USDT)")
+
+                # 1. Play sound
+                self.play_sound_once()
+
+                # 2. System notification (works when minimized/in background)
+                self._send_system_notification(
+                    f"Crypto Alert: {display_symbol}",
+                    message.replace("\n", " ")
+                )
+
+                # 3. Flash the coin row in the GUI
                 if self.gui_callback_visual_alert:
-                    self.gui_callback_visual_alert(coin_symbol, message, "above")
-                self.triggered_alerts[alert_id] = True # Mark that the alert was triggered
+                    self.gui_callback_visual_alert(binance_symbol, message, direction)
+
+                # 4. Show flashing popup window (main thread)
+                if self.gui_callback_popup_alert:
+                    self.gui_callback_popup_alert(display_symbol, message, direction, loop)
+
+            elif not condition_met:
+                # Reset so it can fire again when price re-crosses the threshold
+                self._triggered.pop(alert_id, None)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fmt(price: float) -> str:
+        if price >= 1:
+            return f"{price:,.2f}"
+        elif price >= 0.01:
+            return f"{price:.4f}"
         else:
-            # Reset triggered_alerts if the price falls below the upper limit (so it can be triggered again)
-            if alert_above_price is not None:
-                 self.triggered_alerts.pop(f"{alert_key_base}_above_{alert_above_price}", None)
+            return f"{price:.8f}"
 
-        # Check lower limit
-        alert_below_price = coin_config.get("alert_below")
-        if alert_below_price is not None and current_price < alert_below_price:
-            alert_id = f"{alert_key_base}_below_{alert_below_price}"
-            if not self.triggered_alerts.get(alert_id):
-                message = f"{coin_symbol} has fallen below the price of ${alert_below_price:,.2f}! Current price: ${current_price:.2f}"
-                print(f"ALERT: {message}")
-                if self.sound_enabled_check_callback and self.sound_enabled_check_callback():
-                    self.play_alert_sound()
-                if self.gui_callback_visual_alert:
-                    self.gui_callback_visual_alert(coin_symbol, message, "below")
-                self.triggered_alerts[alert_id] = True # Mark that the alert was triggered
-        else:
-            # Reset triggered_alerts if the price rises above the lower limit
-            if alert_below_price is not None:
-                self.triggered_alerts.pop(f"{alert_key_base}_below_{alert_below_price}", None)
+    def reset_alerts_for_coin(self, binance_symbol: str):
+        """Clear all triggered states and recalibrate baseline for a coin."""
+        keys = [k for k in self._triggered if binance_symbol in k]
+        for k in keys:
+            del self._triggered[k]
+        self._initialized_symbols.discard(binance_symbol)
 
-    def reset_alert_state(self, coin_symbol, coin_id, limit_type, limit_value):
-        """Resets the trigger state for a specific alert if its value changes or it is deactivated.
-        This is important so that after changing a limit, the alert can be triggered again.
-        """
-        alert_key_base = f"{coin_symbol}_{coin_id}"
-        alert_id = f"{alert_key_base}_{limit_type}_{limit_value}"
-        if alert_id in self.triggered_alerts:
-            del self.triggered_alerts[alert_id]
-            print(f"Alert state reset for {alert_id}")
-
-    def reset_all_alerts_for_coin(self, coin_symbol, coin_id):
-        """Resets all triggered alerts for a given coin (e.g., when removing the coin)."""
-        prefix_to_remove = f"{coin_symbol}_{coin_id}_"
-        keys_to_remove = [key for key in self.triggered_alerts if key.startswith(prefix_to_remove)]
-        for key in keys_to_remove:
-            del self.triggered_alerts[key]
-        if keys_to_remove:
-            print(f"All alerts for {coin_symbol} have been reset.")
-
-# --- Testing (example) ---
-def mock_visual_alert(symbol, message, alert_type):
-    print(f"GUI Visual Alert: [{alert_type.upper()}] {symbol} - {message}")
-
-def mock_sound_enabled(): return True
-
-if __name__ == '__main__':
-    alert_manager = AlertManager(gui_callback_visual_alert=mock_visual_alert, sound_enabled_check_callback=mock_sound_enabled)
-
-    btc_config_1 = {"symbol": "BTC", "id": 1, "alert_above": 40000, "alert_below": 35000, "alert_active": True}
-    eth_config_1 = {"symbol": "ETH", "id": 1027, "alert_above": 3000, "alert_below": None, "alert_active": True}
-    ada_config_1 = {"symbol": "ADA", "id": 2010, "alert_above": None, "alert_below": 0.8, "alert_active": False} # Inactive alert
-    
-    print("--- Scenario 1: BTC above limit ---")
-    alert_manager.check_and_trigger_alerts("BTC", 1, 41000, btc_config_1)
-    alert_manager.check_and_trigger_alerts("BTC", 1, 41500, btc_config_1) # Should not trigger again immediately
-    print(f"Triggered alerts: {alert_manager.triggered_alerts}")
-
-    print("\n--- Scenario 2: BTC falls below upper limit and then rises above again (should trigger) ---")
-    alert_manager.check_and_trigger_alerts("BTC", 1, 39000, btc_config_1) # Resets upper alert
-    print(f"Triggered alerts after drop: {alert_manager.triggered_alerts}")
-    alert_manager.check_and_trigger_alerts("BTC", 1, 41000, btc_config_1) # Should trigger again
-    print(f"Triggered alerts after subsequent rise: {alert_manager.triggered_alerts}")
-
-    print("\n--- Scenario 3: ETH above limit ---")
-    alert_manager.check_and_trigger_alerts("ETH", 1027, 3100, eth_config_1)
-    print(f"Triggered alerts: {alert_manager.triggered_alerts}")
-
-    print("\n--- Scenario 4: ADA below limit (but alert is inactive) ---")
-    alert_manager.check_and_trigger_alerts("ADA", 2010, 0.7, ada_config_1)
-    print(f"Triggered alerts (ADA should not be present): {alert_manager.triggered_alerts}")
-
-    print("\n--- Scenario 5: BTC below lower limit ---")
-    btc_config_2 = {"symbol": "BTC", "id": 1, "alert_above": 40000, "alert_below": 35000, "alert_active": True}
-    alert_manager.reset_all_alerts_for_coin("BTC", 1) # Reset for a clean test
-    alert_manager.check_and_trigger_alerts("BTC", 1, 34000, btc_config_2)
-    print(f"Triggered alerts: {alert_manager.triggered_alerts}")
-
-    print("\n--- Scenario 6: Reset specific alert ---")
-    alert_manager.reset_alert_state("BTC", 1, "below", 35000)
-    print(f"Triggered alerts after reset: {alert_manager.triggered_alerts}")
-    alert_manager.check_and_trigger_alerts("BTC", 1, 33000, btc_config_2) # Should trigger again
-    print(f"Triggered alerts: {alert_manager.triggered_alerts}")
-
-    # Test if sound file exists (informational only)
-    if not os.path.exists(sound_file):
-        print(f"WARNING: Sound file {sound_file} does not exist. Sound alerts will not function correctly.")
-    else:
-        print(f"Sound file {sound_file} found.")        
+    def reset_specific_alert(self, alert_id: str):
+        """Clear triggered state for a specific alert."""
+        self._triggered.pop(alert_id, None)

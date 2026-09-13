@@ -1,45 +1,48 @@
-import customtkinter as ctk
-from gui import App # Import the main application class from gui.py
+"""
+main.py
+-------
+Entry point for Kanta's Crypto Alerts · कांता के क्रिप्टो अलर्ट्स.
+Powered by Binance public API — no API key needed!
+"""
+
 import os
+import customtkinter as ctk
+from gui import App
+
 
 def main():
-    # Set application appearance (can also be done directly in App.__init__)
-    # "System" adapts to the OS setting
-    # "Dark" or "Light" for forced dark/light mode
-    ctk.set_appearance_mode("System") 
-    # Color themes: "blue" (default), "green", "dark-blue"
-    ctk.set_default_color_theme("blue")
+    # Force dark mode
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("dark-blue")
 
-    # Scaling settings for high DPI monitors (optional, if issues arise)
-    # ctk.set_widget_scaling(1.0)  # Example: 1.0 for 100% scaling
-    # ctk.set_window_scaling(1.0)
+    import sys
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Check if assets directory exists, create it if not
-    # This is to avoid errors if alert_manager or other parts expect its existence
-    # during import or initialization before the GUI is fully up.
-    assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-    alert_sound_path = os.path.join(assets_dir, "allert.mp3") # Changed from allert.wav
+    # Ensure assets directory and sound file exist
+    assets_dir = os.path.join(base_dir, "assets")
+    alert_sound = os.path.join(assets_dir, "allert.mp3")
+
     if not os.path.exists(assets_dir):
         try:
             os.makedirs(assets_dir)
-            print(f"Directory '{assets_dir}' was created.")
-            # We can also add creation of an empty alert sound file if it's missing
-            if not os.path.exists(alert_sound_path):
-                with open(alert_sound_path, 'w') as f:
-                    pass # Just create an empty file as a placeholder
-                print(f"Placeholder alert sound '{alert_sound_path}' created.")
+            print(f"[main] Created assets directory: {assets_dir}")
         except OSError as e:
-            print(f"Error creating directory '{assets_dir}': {e}")
-    elif not os.path.exists(alert_sound_path): # If assets_dir exists, but sound file doesn't
+            print(f"[main] Could not create assets directory: {e}")
+
+    if not os.path.exists(alert_sound):
         try:
-            with open(alert_sound_path, 'w') as f:
-                pass # Just create an empty file as a placeholder
-            print(f"Placeholder alert sound '{alert_sound_path}' created.")
+            with open(alert_sound, "wb") as f:
+                pass
+            print(f"[main] Created default sound placeholder: {alert_sound}")
         except Exception as e:
-            print(f"Could not create placeholder alert sound '{alert_sound_path}': {e}")
+            print(f"[main] Could not create sound placeholder: {e}")
 
     app = App()
     app.mainloop()
 
+
 if __name__ == "__main__":
-    main() 
+    main()
