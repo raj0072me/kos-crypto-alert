@@ -133,6 +133,7 @@ The output executable will be created at `dist/Kantas_Crypto_Alerts.exe` (~71 MB
 
 - [**`HOW_TO_RUN.md`**](HOW_TO_RUN.md) — Comprehensive run, setup, and troubleshooting manual.
 - [**`GITHUB_GUIDE.md`**](GITHUB_GUIDE.md) — Step-by-step Git & GitHub guide on pushing, pulling, remotes, and conflict resolution.
+- [**`ANDROID_ROADMAP.md`**](ANDROID_ROADMAP.md) — Architectural guide on building the cross-device Android app synced with NeonDB.
 
 ---
 
