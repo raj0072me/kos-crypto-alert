@@ -1053,6 +1053,7 @@ class App(ctk.CTk):
         self._search_thread = None
         self._fetch_thread = None
         self._stop_event = threading.Event()
+        self._db_sync_lock = threading.Lock()
         self._suggestion_dropdown: SuggestionDropdown | None = None
         self._current_prices: dict = {}  # cache for chart windows
 
@@ -1522,10 +1523,114 @@ class App(ctk.CTk):
         self._fetch_thread.start()
 
     def _fetch_loop(self):
+        last_db_sync = 0.0
         while not self._stop_event.is_set():
+            now = time.time()
+            if self._user_id and DB_AVAILABLE and (now - last_db_sync >= 5.0):
+                self._sync_from_db_worker()
+                last_db_sync = now
+
             self._fetch_all_coins()
-            interval = max(5, self.config.get("refresh_interval_seconds", 10))
-            self._stop_event.wait(interval)
+
+            # Wait in 1-second chunks so stop_event is responsive
+            # and check DB every 5s even if price interval is longer
+            interval = max(3, self.config.get("refresh_interval_seconds", 5))
+            for _ in range(int(interval)):
+                if self._stop_event.is_set():
+                    break
+                self._stop_event.wait(1.0)
+                now_check = time.time()
+                if self._user_id and DB_AVAILABLE and (now_check - last_db_sync >= 5.0):
+                    self._sync_from_db_worker()
+                    last_db_sync = now_check
+
+    @staticmethod
+    def _coins_data_equal(c1: list[dict], c2: list[dict]) -> bool:
+        if len(c1) != len(c2):
+            return False
+
+        def _norm_alerts(alerts):
+            norm = []
+            for a in alerts:
+                price = a.get("price")
+                p_val = round(float(price), 8) if price is not None else 0.0
+                norm.append((
+                    str(a.get("id", "")),
+                    p_val,
+                    str(a.get("direction", "above")).lower(),
+                    bool(a.get("active", True)),
+                    bool(a.get("loop", False)),
+                    str(a.get("label", "")).strip(),
+                ))
+            return sorted(norm, key=lambda x: str(x[0]))
+
+        d1 = {c.get("symbol", ""): _norm_alerts(c.get("alerts", [])) for c in c1 if c.get("symbol")}
+        d2 = {c.get("symbol", ""): _norm_alerts(c.get("alerts", [])) for c in c2 if c.get("symbol")}
+        return d1 == d2
+
+    def _sync_from_db_worker(self):
+        """Fetch latest watchlist and alerts from NeonDB in background thread."""
+        if not self._user_id or not DB_AVAILABLE:
+            return
+        if not self._db_sync_lock.acquire(blocking=False):
+            return
+        try:
+            db_coins = db_manager.load_watched_coins(self._user_id)
+            current_coins = self.config.get("watched_coins", [])
+            if not self._coins_data_equal(current_coins, db_coins):
+                self.after(0, lambda: self._apply_db_sync(db_coins))
+        except Exception as e:
+            print(f"[App] DB sync check error: {e}")
+        finally:
+            self._db_sync_lock.release()
+
+    def _apply_db_sync(self, db_coins: list[dict]):
+        """Apply coins and alerts from NeonDB to GUI smoothly without flicker."""
+        current_coins = self.config.get("watched_coins", [])
+        if self._coins_data_equal(current_coins, db_coins):
+            return
+
+        old_syms = {c.get("symbol") for c in current_coins if c.get("symbol")}
+        new_syms = {c.get("symbol") for c in db_coins if c.get("symbol")}
+
+        # Update local config so alert_manager and local cache have latest data
+        self.config["watched_coins"] = db_coins
+        save_config(self.config)
+
+        # Removed coins: destroy their rows
+        for sym in (old_syms - new_syms):
+            if sym in self.coin_rows:
+                self.coin_rows[sym].destroy()
+                del self.coin_rows[sym]
+                self.alert_manager.reset_alerts_for_coin(sym)
+
+        # Added coins: create rows and fetch their price immediately
+        for coin in db_coins:
+            sym = coin.get("symbol")
+            if sym in (new_syms - old_syms):
+                self._add_coin_row(coin, row_index=len(self.coin_rows))
+                t = threading.Thread(target=self._fetch_single_now, args=(sym,), daemon=True)
+                t.start()
+
+        # Existing coins: update coin_config in-place and refresh alert count button
+        for coin in db_coins:
+            sym = coin.get("symbol")
+            if sym in self.coin_rows:
+                row = self.coin_rows[sym]
+                row.coin_config = coin
+                row.update_alert_count()
+
+        if not db_coins:
+            self.status_label.configure(
+                text="No coins tracked. Use 'Add Coin' above. (कॉइन जोड़ें)",
+                text_color=TEXT_SECONDARY
+            )
+        else:
+            now_str = time.strftime("%H:%M:%S")
+            self.status_label.configure(
+                text=f"Auto-synced with mobile at {now_str} (मोबाइल से सिंक हुआ)",
+                text_color=ACCENT_GREEN
+            )
 
     def _fetch_all_coins(self):
         watched = self.config.get("watched_coins", [])
@@ -1614,10 +1719,11 @@ class App(ctk.CTk):
         """Push current watchlist and alerts to NeonDB for the logged-in user."""
         if not self._user_id or not DB_AVAILABLE:
             return
-        try:
-            db_manager.save_watched_coins(self._user_id, self.config.get("watched_coins", []))
-        except Exception as e:
-            print(f"[App] DB sync error: {e}")
+        with self._db_sync_lock:
+            try:
+                db_manager.save_watched_coins(self._user_id, self.config.get("watched_coins", []))
+            except Exception as e:
+                print(f"[App] DB sync error: {e}")
 
     def _on_close(self, skip_callback: bool = False):
         self._stop_event.set()
