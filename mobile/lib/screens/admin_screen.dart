@@ -149,10 +149,13 @@ class _AdminScreenState extends State<AdminScreen> with SingleTickerProviderStat
                         child: ListTile(
                           leading: CircleAvatar(
                             backgroundColor: u.isAdmin ? primary.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
-                            child: Icon(
-                              u.isAdmin ? Icons.security_rounded : Icons.person_rounded,
-                              color: u.isAdmin ? primary : Colors.blueAccent,
-                            ),
+                            backgroundImage: u.profilePicBytes != null ? MemoryImage(u.profilePicBytes!) : null,
+                            child: u.profilePicBytes == null
+                                ? Icon(
+                                    u.isAdmin ? Icons.security_rounded : Icons.person_rounded,
+                                    color: u.isAdmin ? primary : Colors.blueAccent,
+                                  )
+                                : null,
                           ),
                           title: Text(u.displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text(u.phone, style: const TextStyle(color: Color(0xFF8B949E))),

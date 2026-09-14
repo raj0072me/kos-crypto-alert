@@ -62,7 +62,7 @@ class DbService {
   /// Get user by phone number (no password — app uses phone-based login like PC)
   static Future<AppUser?> getUserByPhone(String phone) async {
     final rows = await _query(
-      'SELECT id, phone, display_name, is_admin FROM users WHERE phone = \$1',
+      'SELECT id, phone, display_name, is_admin, profile_pic FROM users WHERE phone = \$1',
       [phone.trim()],
     );
     if (rows.isEmpty) return null;
@@ -72,7 +72,7 @@ class DbService {
   /// Get ALL users (admin only)
   static Future<List<AppUser>> getAllUsers() async {
     final rows = await _query(
-      'SELECT id, phone, display_name, is_admin FROM users ORDER BY created_at',
+      'SELECT id, phone, display_name, is_admin, profile_pic FROM users ORDER BY created_at',
       [],
     );
     return rows.map(AppUser.fromJson).toList();

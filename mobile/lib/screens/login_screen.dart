@@ -57,6 +57,7 @@ class _LoginScreenState extends State<LoginScreen> {
         phone: user.phone,
         isAdmin: user.isAdmin,
         token: 'token_${user.id}_${DateTime.now().millisecondsSinceEpoch}',
+        profilePicBytes: user.profilePicBytes,
       );
 
       await SessionService.saveSession(session);

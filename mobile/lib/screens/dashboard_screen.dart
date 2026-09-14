@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:workmanager/workmanager.dart';
 
@@ -43,6 +44,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   bool _loading = true;
   bool _isAlarmRinging = false;
+  Uint8List? _profilePicBytes;
 
   // Tracks whether the app was in the background when it resumes.
   // If true the next price evaluation runs in "silent" mode.
@@ -51,6 +53,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void initState() {
     super.initState();
+    _profilePicBytes = widget.session.profilePicBytes;
     WidgetsBinding.instance.addObserver(this);
     _initDashboard();
     _startWorkManager();
@@ -86,6 +89,14 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _initDashboard() async {
+    if (_profilePicBytes == null) {
+      DbService.getUserByPhone(widget.session.phone).then((user) {
+        if (mounted && user?.profilePicBytes != null) {
+          setState(() => _profilePicBytes = user!.profilePicBytes);
+        }
+      }).catchError((_) {});
+    }
+
     await _loadCoinsAndAlerts();
 
     // Fast foreground price poll — every 4 seconds
@@ -354,20 +365,16 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 66,   // slightly taller bar to give avatar room
+        toolbarHeight: 68,
         title: Row(
           children: [
             // ── User profile avatar ────────────────────────────────────────
             Container(
-              width: 42,
-              height: 42,
+              width: 46,
+              height: 46,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF00D4AA), Color(0xFF0099FF)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+                border: Border.all(color: primary.withOpacity(0.5), width: 1.5),
                 boxShadow: [
                   BoxShadow(
                     color: primary.withOpacity(0.35),
@@ -376,16 +383,54 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ),
                 ],
               ),
-              child: Center(
-                child: Text(
-                  widget.session.initials,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
-                  ),
-                ),
+              child: ClipOval(
+                child: _profilePicBytes != null
+                    ? Image.memory(
+                        _profilePicBytes!,
+                        width: 46,
+                        height: 46,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(0xFF00D4AA), Color(0xFF0099FF)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                          ),
+                          child: Center(
+                            child: Text(
+                              widget.session.initials,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : Container(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Color(0xFF00D4AA), Color(0xFF0099FF)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            widget.session.initials,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ),
               ),
             ),
             const SizedBox(width: 12),
