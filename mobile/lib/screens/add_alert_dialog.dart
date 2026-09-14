@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/db_service.dart';
 import '../services/price_service.dart';
+import '../widgets/coin_icon.dart';
 
 class AddAlertDialog extends StatefulWidget {
   final int userId;
@@ -97,10 +98,7 @@ class _AddAlertDialogState extends State<AddAlertDialog> {
       ),
       title: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: Image.asset('assets/images/logo.png', width: 26, height: 26),
-          ),
+          CoinIcon(symbol: widget.coin.symbol, size: 28),
           const SizedBox(width: 10),
           Text(
             'Alert: ${widget.coin.displaySymbol}',

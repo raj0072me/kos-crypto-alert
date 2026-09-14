@@ -21,6 +21,7 @@ import '../services/price_service.dart';
 import '../services/alarm_service.dart';
 import '../services/session_service.dart';
 import '../services/background_task.dart';
+import '../widgets/coin_icon.dart';
 import 'login_screen.dart';
 import 'admin_screen.dart';
 import 'add_alert_dialog.dart';
@@ -44,6 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   bool _loading = true;
   bool _isAlarmRinging = false;
+  bool _isSyncing = false;
   Uint8List? _profilePicBytes;
 
   // Tracks whether the app was in the background when it resumes.
@@ -99,15 +101,16 @@ class _DashboardScreenState extends State<DashboardScreen>
 
     await _loadCoinsAndAlerts();
 
-    // Fast foreground price poll — every 4 seconds
+    // Foreground price poll — every 4 seconds
     _priceTimer = Timer.periodic(
       const Duration(seconds: 4),
       (_) => _pollPrices(),
     );
 
-    // DB sync every 30 seconds — keeps PC ↔ mobile in sync
+    // Fast DB auto-sync every 5 seconds — automatically reflects PC changes
+    // (new coins, removed coins, added/deleted alerts) without manual refresh
     _dbSyncTimer = Timer.periodic(
-      const Duration(seconds: 30),
+      const Duration(seconds: 5),
       (_) => _loadCoinsAndAlerts(),
     );
   }
@@ -124,9 +127,18 @@ class _DashboardScreenState extends State<DashboardScreen>
   /// [silent] = true → evaluates alerts but shows dialog, no sound/vibration.
   /// Used when the app comes back from background to avoid stacked alarm noise.
   Future<void> _loadCoinsAndAlerts({bool silent = false}) async {
+    if (_isSyncing) return;
+    _isSyncing = true;
     try {
       final coins = await DbService.getWatchedCoins(widget.session.userId);
       final alerts = await DbService.getActiveAlerts(widget.session.userId);
+
+      // Preserve previously fetched live prices so UI never blinks or resets to null
+      for (final coin in coins) {
+        if (_prevPrices.containsKey(coin.symbol)) {
+          coin.currentPrice = _prevPrices[coin.symbol];
+        }
+      }
 
       if (mounted) {
         setState(() {
@@ -138,6 +150,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       await _pollPrices(silent: silent);
     } catch (_) {
       if (mounted) setState(() => _loading = false);
+    } finally {
+      _isSyncing = false;
     }
   }
 
@@ -247,14 +261,18 @@ class _DashboardScreenState extends State<DashboardScreen>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
+            CoinIcon(symbol: symbol, size: 28),
+            const SizedBox(width: 10),
             Icon(
               isAbove ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
               color: isAbove ? const Color(0xFF3FB950) : const Color(0xFFF85149),
             ),
             const SizedBox(width: 8),
-            Text(
-              '$symbol ${isAbove ? "ABOVE" : "BELOW"} \$${PriceService.formatPrice(threshold)}',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            Expanded(
+              child: Text(
+                '$symbol ${isAbove ? "ABOVE" : "BELOW"} \$${PriceService.formatPrice(threshold)}',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              ),
             ),
           ],
         ),
@@ -331,6 +349,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                   itemBuilder: (c, idx) {
                     final item = searchResults[idx];
                     return ListTile(
+                      leading: CoinIcon(symbol: item['symbol'] ?? '', size: 34),
                       title: Text(item['display'] ?? '',
                           style: const TextStyle(fontWeight: FontWeight.bold)),
                       subtitle: Text(item['symbol'] ?? '',
@@ -571,20 +590,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                                     // Header: Symbol + Live Price + Actions
                                     Row(
                                       children: [
-                                        // Coin Avatar
-                                        CircleAvatar(
-                                          backgroundColor:
-                                              primary.withOpacity(0.15),
-                                          child: Text(
-                                            coin.displaySymbol.substring(
-                                                0,
-                                                coin.displaySymbol.length
-                                                    .clamp(0, 3)),
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                color: primary,
-                                                fontSize: 12),
-                                          ),
+                                        // Coin Icon
+                                        CoinIcon(
+                                          symbol: coin.symbol,
+                                          size: 40,
                                         ),
                                         const SizedBox(width: 12),
                                         // Symbol info
