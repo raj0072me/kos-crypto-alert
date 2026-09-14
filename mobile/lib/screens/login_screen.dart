@@ -1,7 +1,6 @@
 // lib/screens/login_screen.dart
 // ─────────────────────────────────────────────────────────────────────────────
 // Phone-number based login matching the desktop app UX.
-// Also provides quick buttons for Admin and User test logins.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
@@ -55,6 +54,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final session = UserSession(
         userId: user.id,
         displayName: user.displayName,
+        phone: user.phone,
         isAdmin: user.isAdmin,
         token: 'token_${user.id}_${DateTime.now().millisecondsSinceEpoch}',
       );
@@ -88,33 +88,33 @@ class _LoginScreenState extends State<LoginScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Logo / Icon
+                // Logo / Icon — larger, glowing
                 Center(
                   child: Container(
-                    width: 96,
-                    height: 96,
+                    width: 110,
+                    height: 110,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       boxShadow: [
                         BoxShadow(
-                          color: primary.withOpacity(0.25),
-                          blurRadius: 20,
-                          spreadRadius: 2,
+                          color: primary.withOpacity(0.30),
+                          blurRadius: 28,
+                          spreadRadius: 4,
                         ),
                       ],
                     ),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(48),
+                      borderRadius: BorderRadius.circular(55),
                       child: Image.asset(
                         'assets/images/logo.png',
-                        width: 96,
-                        height: 96,
-                        fit: BoxFit.contain,
+                        width: 110,
+                        height: 110,
+                        fit: BoxFit.cover,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 22),
 
                 // Title
                 const Text(
@@ -159,7 +159,14 @@ class _LoginScreenState extends State<LoginScreen> {
                         keyboardType: TextInputType.phone,
                         style: const TextStyle(fontSize: 16),
                         decoration: InputDecoration(
-                          hintText: 'e.g. 9818011930',
+                          // Properly styled hint — clearly faded, not pre-filled
+                          hintText: '9898989898',
+                          hintStyle: TextStyle(
+                            color: textMuted.withOpacity(0.45),
+                            fontSize: 16,
+                            fontStyle: FontStyle.italic,
+                            letterSpacing: 0.5,
+                          ),
                           prefixIcon: const Icon(Icons.phone_android_rounded),
                           contentPadding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 14),
@@ -199,7 +206,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 const SizedBox(height: 28),
 
-                // Quick Login Buttons (same as desktop test users)
+                // Quick Login Buttons
                 const Text(
                   'QUICK LOGIN',
                   textAlign: TextAlign.center,

@@ -1,6 +1,13 @@
 // lib/screens/dashboard_screen.dart
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Dashboard: Live Binance prices, NeonDB alert sync, and real-time triggers.
+//
+// Key behaviours:
+//  • Price polling every 4s (foreground)
+//  • DB sync (coins + alerts) every 30s so PC ↔ mobile stays in sync
+//  • When app resumes from background, missed alerts are shown as SILENT
+//    dialog notifications — no sound stack-up
+//  • AppBar shows a user avatar circle (initials) before the user name
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dart:async';
@@ -25,13 +32,21 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   List<WatchedCoin> _coins = [];
   List<CoinAlert> _alerts = [];
   Map<String, double> _prevPrices = {};
+
   Timer? _priceTimer;
+  Timer? _dbSyncTimer;
+
   bool _loading = true;
   bool _isAlarmRinging = false;
+
+  // Tracks whether the app was in the background when it resumes.
+  // If true the next price evaluation runs in "silent" mode.
+  bool _wasInBackground = false;
 
   @override
   void initState() {
@@ -45,13 +60,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _priceTimer?.cancel();
+    _dbSyncTimer?.cancel();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _wasInBackground = true;
+    }
+
     if (state == AppLifecycleState.resumed) {
-      _pollPrices();
+      // Reload coins+alerts from DB first, then evaluate prices silently
+      // so stacked triggers don't play sounds all at once.
+      _loadCoinsAndAlerts(silent: true);
       _checkAlarmStatus();
     }
   }
@@ -64,12 +87,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   Future<void> _initDashboard() async {
     await _loadCoinsAndAlerts();
-    // Start fast foreground polling (every 4 seconds)
-    _priceTimer = Timer.periodic(const Duration(seconds: 4), (_) => _pollPrices());
+
+    // Fast foreground price poll — every 4 seconds
+    _priceTimer = Timer.periodic(
+      const Duration(seconds: 4),
+      (_) => _pollPrices(),
+    );
+
+    // DB sync every 30 seconds — keeps PC ↔ mobile in sync
+    _dbSyncTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _loadCoinsAndAlerts(),
+    );
   }
 
   void _startWorkManager() {
-    // Schedule background periodic price check (every 15 mins by Android limits)
     Workmanager().registerPeriodicTask(
       'kos_periodic_monitor',
       BackgroundTask.taskName,
@@ -78,7 +110,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
-  Future<void> _loadCoinsAndAlerts() async {
+  /// [silent] = true → evaluates alerts but shows dialog, no sound/vibration.
+  /// Used when the app comes back from background to avoid stacked alarm noise.
+  Future<void> _loadCoinsAndAlerts({bool silent = false}) async {
     try {
       final coins = await DbService.getWatchedCoins(widget.session.userId);
       final alerts = await DbService.getActiveAlerts(widget.session.userId);
@@ -90,13 +124,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           _loading = false;
         });
       }
-      await _pollPrices();
+      await _pollPrices(silent: silent);
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _pollPrices() async {
+  Future<void> _pollPrices({bool silent = false}) async {
     if (_coins.isEmpty) return;
     final symbols = _coins.map((c) => c.symbol).toList();
     final prices = await PriceService.getPrices(symbols);
@@ -115,11 +149,19 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       }
     });
 
-    // Check alerts in foreground
-    _evaluateAlerts(prices);
+    // Determine if this call came from a background resume
+    final isSilent = silent || _wasInBackground;
+    if (_wasInBackground) _wasInBackground = false; // reset after first check
+
+    _evaluateAlerts(prices, silent: isSilent);
   }
 
-  Future<void> _evaluateAlerts(Map<String, double> prices) async {
+  Future<void> _evaluateAlerts(
+    Map<String, double> prices, {
+    bool silent = false,
+  }) async {
+    final List<CoinAlert> triggered = [];
+
     for (final alert in _alerts) {
       if (!alert.isActive) continue;
       final currentPrice = prices[alert.symbol];
@@ -133,15 +175,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       }
 
       if (trigger) {
-        setState(() => _isAlarmRinging = true);
-        await AlarmService.fireAlarm(
-          symbol: alert.symbol.replaceAll('USDT', ''),
-          alertType: alert.alertType,
-          triggerPrice: currentPrice,
-          threshold: alert.price,
-          loop: alert.loopAlarm,
-        );
-
+        triggered.add(alert);
         await DbService.logAlertHistory(
           userId: widget.session.userId,
           symbol: alert.symbol,
@@ -156,6 +190,75 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         }
       }
     }
+
+    if (triggered.isEmpty) return;
+
+    if (silent) {
+      // ── SILENT MODE: app just reopened, show stacked dialogs without sound ──
+      for (final alert in triggered) {
+        final currentPrice = prices[alert.symbol]!;
+        if (mounted) {
+          _showSilentAlertDialog(
+            symbol: alert.symbol.replaceAll('USDT', ''),
+            alertType: alert.alertType,
+            triggerPrice: currentPrice,
+            threshold: alert.price,
+          );
+        }
+      }
+    } else {
+      // ── LIVE MODE: fire the full alarm with sound for the first triggered alert
+      setState(() => _isAlarmRinging = true);
+      final first = triggered.first;
+      final currentPrice = prices[first.symbol]!;
+      await AlarmService.fireAlarm(
+        symbol: first.symbol.replaceAll('USDT', ''),
+        alertType: first.alertType,
+        triggerPrice: currentPrice,
+        threshold: first.price,
+        loop: first.loopAlarm,
+      );
+    }
+  }
+
+  // Shows a brief informational dialog — no sound, no vibration
+  void _showSilentAlertDialog({
+    required String symbol,
+    required String alertType,
+    required double triggerPrice,
+    required double threshold,
+  }) {
+    final isAbove = alertType == 'above';
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF161B22),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(
+              isAbove ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+              color: isAbove ? const Color(0xFF3FB950) : const Color(0xFFF85149),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '$symbol ${isAbove ? "ABOVE" : "BELOW"} \$${PriceService.formatPrice(threshold)}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Text(
+          'This alert triggered while the app was closed.\n\nPrice at trigger: \$${PriceService.formatPrice(triggerPrice)}',
+          style: const TextStyle(color: Color(0xFF8B949E)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK', style: TextStyle(color: Color(0xFF00D4AA))),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _stopAlarmNow() async {
@@ -217,9 +320,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   itemBuilder: (c, idx) {
                     final item = searchResults[idx];
                     return ListTile(
-                      title: Text(item['display'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(item['symbol'] ?? '', style: const TextStyle(color: Color(0xFF8B949E))),
-                      trailing: const Icon(Icons.add_circle_outline_rounded, color: Color(0xFF00D4AA)),
+                      title: Text(item['display'] ?? '',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(item['symbol'] ?? '',
+                          style: const TextStyle(color: Color(0xFF8B949E))),
+                      trailing: const Icon(Icons.add_circle_outline_rounded,
+                          color: Color(0xFF00D4AA)),
                       onTap: () async {
                         await DbService.addWatchedCoin(
                           widget.session.userId,
@@ -248,14 +354,63 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 66,   // slightly taller bar to give avatar room
         title: Row(
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: Image.asset('assets/images/logo.png', width: 28, height: 28),
+            // ── User profile avatar ────────────────────────────────────────
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF00D4AA), Color(0xFF0099FF)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: primary.withOpacity(0.35),
+                    blurRadius: 8,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  widget.session.initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(width: 10),
-            Text(widget.session.displayName),
+            const SizedBox(width: 12),
+            // ── Display name ──────────────────────────────────────────────
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.session.displayName,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  widget.session.isAdmin ? 'Administrator' : 'Member',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: textMuted,
+                    fontWeight: FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
         actions: [
@@ -286,7 +441,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         backgroundColor: primary,
         foregroundColor: Colors.black,
         icon: const Icon(Icons.add_rounded),
-        label: const Text('Add Coin', style: TextStyle(fontWeight: FontWeight.bold)),
+        label: const Text('Add Coin',
+            style: TextStyle(fontWeight: FontWeight.bold)),
         onPressed: _showAddCoinDialog,
       ),
       body: Column(
@@ -294,7 +450,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           // Flashing Banner when Alarm is Ringing
           if (_isAlarmRinging)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               color: const Color(0xFFDA3633),
               child: Row(
                 children: [
@@ -303,11 +460,16 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   const Expanded(
                     child: Text(
                       '🚨 ALARM RINGING!',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15),
                     ),
                   ),
                   ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black),
                     onPressed: _stopAlarmNow,
                     child: const Text('DISMISS'),
                   ),
@@ -326,10 +488,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                           children: [
                             Opacity(
                               opacity: 0.7,
-                              child: Image.asset('assets/images/logo.png', width: 72, height: 72),
+                              child: Image.asset('assets/images/logo.png',
+                                  width: 72, height: 72),
                             ),
                             const SizedBox(height: 12),
-                            const Text('No coins added yet', style: TextStyle(color: textMuted, fontSize: 16)),
+                            const Text('No coins added yet',
+                                style:
+                                    TextStyle(color: textMuted, fontSize: 16)),
                             const SizedBox(height: 8),
                             ElevatedButton(
                               onPressed: _showAddCoinDialog,
@@ -339,13 +504,17 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                         ),
                       )
                     : RefreshIndicator(
-                        onRefresh: _loadCoinsAndAlerts,
+                        onRefresh: () => _loadCoinsAndAlerts(),
                         child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+                          padding:
+                              const EdgeInsets.fromLTRB(16, 12, 16, 80),
                           itemCount: _coins.length,
                           itemBuilder: (ctx, idx) {
                             final coin = _coins[idx];
-                            final coinAlerts = _alerts.where((a) => a.symbol == coin.symbol && a.isActive).toList();
+                            final coinAlerts = _alerts
+                                .where((a) =>
+                                    a.symbol == coin.symbol && a.isActive)
+                                .toList();
                             final isUp = coin.priceUp;
 
                             return Card(
@@ -354,37 +523,50 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                 padding: const EdgeInsets.all(14.0),
                                 child: Column(
                                   children: [
-                                    // Header: Symbol + Live Price + Action
+                                    // Header: Symbol + Live Price + Actions
                                     Row(
                                       children: [
                                         // Coin Avatar
                                         CircleAvatar(
-                                          backgroundColor: primary.withOpacity(0.15),
+                                          backgroundColor:
+                                              primary.withOpacity(0.15),
                                           child: Text(
-                                            coin.displaySymbol.substring(0, coin.displaySymbol.length.clamp(0, 3)),
-                                            style: const TextStyle(fontWeight: FontWeight.bold, color: primary, fontSize: 12),
+                                            coin.displaySymbol.substring(
+                                                0,
+                                                coin.displaySymbol.length
+                                                    .clamp(0, 3)),
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                color: primary,
+                                                fontSize: 12),
                                           ),
                                         ),
                                         const SizedBox(width: 12),
                                         // Symbol info
                                         Expanded(
                                           child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
                                               Text(
                                                 coin.displaySymbol,
-                                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
+                                                style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 17),
                                               ),
                                               Text(
                                                 coin.symbol,
-                                                style: const TextStyle(color: textMuted, fontSize: 12),
+                                                style: const TextStyle(
+                                                    color: textMuted,
+                                                    fontSize: 12),
                                               ),
                                             ],
                                           ),
                                         ),
                                         // Price Ticker
                                         Column(
-                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.end,
                                           children: [
                                             Text(
                                               coin.currentPrice != null
@@ -393,16 +575,25 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                               style: TextStyle(
                                                 fontWeight: FontWeight.bold,
                                                 fontSize: 16,
-                                                color: coin.currentPrice != null
-                                                    ? (isUp ? const Color(0xFF00D4AA) : const Color(0xFFFF6B6B))
+                                                color: coin.currentPrice !=
+                                                        null
+                                                    ? (isUp
+                                                        ? const Color(
+                                                            0xFF00D4AA)
+                                                        : const Color(
+                                                            0xFFFF6B6B))
                                                     : Colors.white,
                                               ),
                                             ),
                                             Text(
-                                              isUp ? '▲ Ticking up' : '▼ Ticking down',
+                                              isUp
+                                                  ? '▲ Ticking up'
+                                                  : '▼ Ticking down',
                                               style: TextStyle(
                                                 fontSize: 10,
-                                                color: isUp ? const Color(0xFF00D4AA) : const Color(0xFFFF6B6B),
+                                                color: isUp
+                                                    ? const Color(0xFF00D4AA)
+                                                    : const Color(0xFFFF6B6B),
                                               ),
                                             ),
                                           ],
@@ -410,28 +601,41 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                         const SizedBox(width: 8),
                                         // Set Alert Button
                                         IconButton(
-                                          icon: const Icon(Icons.notification_add_rounded, color: primary),
+                                          icon: const Icon(
+                                              Icons.notification_add_rounded,
+                                              color: primary),
                                           tooltip: 'Set Alert',
                                           onPressed: coin.currentPrice == null
                                               ? null
                                               : () async {
-                                                  final created = await showDialog<bool>(
+                                                  final created =
+                                                      await showDialog<bool>(
                                                     context: context,
-                                                    builder: (_) => AddAlertDialog(
-                                                      userId: widget.session.userId,
+                                                    builder: (_) =>
+                                                        AddAlertDialog(
+                                                      userId:
+                                                          widget.session.userId,
                                                       coin: coin,
-                                                      currentPrice: coin.currentPrice!,
+                                                      currentPrice:
+                                                          coin.currentPrice!,
                                                     ),
                                                   );
-                                                  if (created == true) _loadCoinsAndAlerts();
+                                                  if (created == true) {
+                                                    _loadCoinsAndAlerts();
+                                                  }
                                                 },
                                         ),
                                         // Delete Coin
                                         IconButton(
-                                          icon: const Icon(Icons.close_rounded, size: 18, color: textMuted),
+                                          icon: const Icon(
+                                              Icons.close_rounded,
+                                              size: 18,
+                                              color: textMuted),
                                           tooltip: 'Remove Coin',
                                           onPressed: () async {
-                                            await DbService.removeWatchedCoin(widget.session.userId, coin.symbol);
+                                            await DbService.removeWatchedCoin(
+                                                widget.session.userId,
+                                                coin.symbol);
                                             _loadCoinsAndAlerts();
                                           },
                                         ),
@@ -440,30 +644,41 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
                                     // Active Alerts under this coin
                                     if (coinAlerts.isNotEmpty) ...[
-                                      const Divider(color: Color(0xFF30363D), height: 20),
+                                      const Divider(
+                                          color: Color(0xFF30363D), height: 20),
                                       Wrap(
                                         spacing: 8,
                                         runSpacing: 6,
                                         children: coinAlerts.map((a) {
-                                          final isAbove = a.alertType == 'above';
+                                          final isAbove =
+                                              a.alertType == 'above';
                                           return Chip(
                                             backgroundColor: isAbove
-                                                ? const Color(0xFF238636).withOpacity(0.25)
-                                                : const Color(0xFFDA3633).withOpacity(0.25),
+                                                ? const Color(0xFF238636)
+                                                    .withOpacity(0.25)
+                                                : const Color(0xFFDA3633)
+                                                    .withOpacity(0.25),
                                             side: BorderSide(
-                                              color: isAbove ? const Color(0xFF238636) : const Color(0xFFDA3633),
+                                              color: isAbove
+                                                  ? const Color(0xFF238636)
+                                                  : const Color(0xFFDA3633),
                                             ),
                                             label: Text(
                                               '${isAbove ? '▲ >' : '▼ <'} \$${PriceService.formatPrice(a.price)} ${a.loopAlarm ? '🔁' : ''}',
                                               style: TextStyle(
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.bold,
-                                                color: isAbove ? const Color(0xFF3FB950) : const Color(0xFFF85149),
+                                                color: isAbove
+                                                    ? const Color(0xFF3FB950)
+                                                    : const Color(0xFFF85149),
                                               ),
                                             ),
-                                            deleteIcon: const Icon(Icons.close_rounded, size: 14),
+                                            deleteIcon: const Icon(
+                                                Icons.close_rounded,
+                                                size: 14),
                                             onDeleted: () async {
-                                              await DbService.deleteAlert(a.alertUuid);
+                                              await DbService.deleteAlert(
+                                                  a.alertUuid);
                                               _loadCoinsAndAlerts();
                                             },
                                           );

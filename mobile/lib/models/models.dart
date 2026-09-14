@@ -6,19 +6,33 @@
 class UserSession {
   final int userId;
   final String displayName;
+  final String phone;          // Used to derive avatar initials
   final bool isAdmin;
   final String token;
 
   const UserSession({
     required this.userId,
     required this.displayName,
+    required this.phone,
     required this.isAdmin,
     required this.token,
   });
 
+  /// First letter(s) of display name for the avatar circle
+  String get initials {
+    final parts = displayName.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return displayName.isNotEmpty
+        ? displayName.substring(0, displayName.length.clamp(0, 2)).toUpperCase()
+        : '?';
+  }
+
   Map<String, dynamic> toJson() => {
     'userId': userId,
     'displayName': displayName,
+    'phone': phone,
     'isAdmin': isAdmin,
     'token': token,
   };
@@ -26,6 +40,7 @@ class UserSession {
   factory UserSession.fromJson(Map<String, dynamic> j) => UserSession(
     userId: j['userId'] as int,
     displayName: j['displayName'] as String,
+    phone: j['phone'] as String? ?? '',
     isAdmin: j['isAdmin'] as bool,
     token: j['token'] as String,
   );
