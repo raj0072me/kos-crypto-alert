@@ -24,8 +24,6 @@ dependencies:
   wakelock_plus: ^1.2.8
   # Shared preferences (lightweight local settings)
   shared_preferences: ^2.3.2
-  # Keep screen on during alarm
-  screen_keep_on: ^1.0.0
   # Charts for price history
   fl_chart: ^0.69.0
   # Nice loading spinner
