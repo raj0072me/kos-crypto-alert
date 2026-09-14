@@ -29,6 +29,13 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: 🛠️ Configure Android Platform
+        working-directory: mobile
+        run: |
+          cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml || true
+          flutter create --platforms=android --org com.kanta .
+          cp /tmp/AndroidManifest.xml android/app/src/main/AndroidManifest.xml || true
+
       - name: 📦 Install Flutter dependencies
         working-directory: mobile
         run: flutter pub get
