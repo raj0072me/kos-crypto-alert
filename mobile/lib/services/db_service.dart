@@ -25,18 +25,21 @@ class DbService {
   static String get _connectionString =>
       'postgresql://$_user:$_password@$_host/$_database?sslmode=require';
 
-  static final Uri _sqlEndpoint = Uri.parse('https://$_host/sql/v1');
+  static final Uri _sqlEndpoint = Uri.parse('https://$_host/sql');
 
   static Map<String, String> get _headers => {
     'Content-Type': 'application/json',
-    'Authorization': 'Bearer $_password',
     'Neon-Connection-String': _connectionString,
   };
 
   // ── Generic query helper ──────────────────────────────────────────────────
   static Future<List<Map<String, dynamic>>> _query(
       String sql, List<dynamic> params) async {
-    final body = jsonEncode({'query': sql, 'params': params});
+    final Map<String, dynamic> payload = {'query': sql};
+    if (params.isNotEmpty) {
+      payload['params'] = params;
+    }
+    final body = jsonEncode(payload);
     final response = await http
         .post(_sqlEndpoint, headers: _headers, body: body)
         .timeout(const Duration(seconds: 15));
