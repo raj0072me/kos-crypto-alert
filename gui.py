@@ -1054,6 +1054,7 @@ class App(ctk.CTk):
         self._fetch_thread = None
         self._stop_event = threading.Event()
         self._db_sync_lock = threading.Lock()
+        self._last_local_edit_time = 0.0
         self._suggestion_dropdown: SuggestionDropdown | None = None
         self._current_prices: dict = {}  # cache for chart windows
 
@@ -1459,21 +1460,23 @@ class App(ctk.CTk):
         if not messagebox.askyesno("Remove Coin (कॉइन हटाएं)", msg, parent=self):
             return
 
+        # 1. Update UI and local config INSTANTLY (0ms lag, no freeze)
+        if binance_symbol in self.coin_rows:
+            self.coin_rows[binance_symbol].destroy()
+            del self.coin_rows[binance_symbol]
+
         self.config["watched_coins"] = [
             c for c in self.config.get("watched_coins", [])
             if c.get("symbol") != binance_symbol
         ]
         save_config(self.config)
-        self._sync_coins_to_db()
-
-        if binance_symbol in self.coin_rows:
-            self.coin_rows[binance_symbol].destroy()
-            del self.coin_rows[binance_symbol]
-
         self.alert_manager.reset_alerts_for_coin(binance_symbol)
         self.status_label.configure(
             text=f"Removed {disp}/USDT ({disp} हटाया गया)", text_color=TEXT_SECONDARY
         )
+
+        # 2. Push to NeonDB in background thread without blocking Tkinter UI
+        self._sync_coins_to_db(blocking=False)
 
     # ──────────────────────────────────────────────────────────────────
     # Dialogs & Windows
@@ -1571,6 +1574,8 @@ class App(ctk.CTk):
     def _sync_from_db_worker(self):
         """Fetch latest watchlist and alerts from NeonDB in background thread."""
         if not self._user_id or not DB_AVAILABLE:
+            return
+        if time.time() - self._last_local_edit_time < 3.0:
             return
         if not self._db_sync_lock.acquire(blocking=False):
             return
@@ -1715,21 +1720,32 @@ class App(ctk.CTk):
         ls = LoginScreen()
         ls.mainloop()
 
-    def _sync_coins_to_db(self):
-        """Push current watchlist and alerts to NeonDB for the logged-in user."""
+    def _sync_coins_to_db(self, blocking: bool = False):
+        """Push current watchlist and alerts to NeonDB without freezing UI."""
         if not self._user_id or not DB_AVAILABLE:
             return
-        with self._db_sync_lock:
-            try:
-                db_manager.save_watched_coins(self._user_id, self.config.get("watched_coins", []))
-            except Exception as e:
-                print(f"[App] DB sync error: {e}")
+        self._last_local_edit_time = time.time()
+        import copy
+        coins_snapshot = copy.deepcopy(self.config.get("watched_coins", []))
+        user_id = self._user_id
+
+        def _worker():
+            with self._db_sync_lock:
+                try:
+                    db_manager.save_watched_coins(user_id, coins_snapshot)
+                except Exception as e:
+                    print(f"[App] DB sync error: {e}")
+
+        if blocking:
+            _worker()
+        else:
+            threading.Thread(target=_worker, daemon=True).start()
 
     def _on_close(self, skip_callback: bool = False):
         self._stop_event.set()
         self.alert_manager.stop_sound()
         save_config(self.config)
-        self._sync_coins_to_db()
+        self._sync_coins_to_db(blocking=True)
         self.destroy()
         if not skip_callback and self._on_close_callback:
             try:
