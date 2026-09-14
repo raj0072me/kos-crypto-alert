@@ -8,7 +8,6 @@ import 'dart:ui';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 import 'price_service.dart';
 
 class AlarmService {
@@ -80,9 +79,6 @@ class AlarmService {
     if (_ringing && !loop) return;
     _ringing = true;
 
-    // Wake the screen
-    await WakelockPlus.enable();
-
     // Vibrate pattern: long-short-long
     if (await Vibration.hasVibrator() ?? false) {
       Vibration.vibrate(pattern: [0, 500, 200, 500, 200, 1000], repeat: loop ? 0 : -1);
@@ -130,7 +126,6 @@ class AlarmService {
     _player?.dispose();
     _player = null;
     Vibration.cancel();
-    await WakelockPlus.disable();
     await _notifs.cancelAll();
   }
 

@@ -20,14 +20,8 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   # Audio playback for alarm sound
   audioplayers: ^6.0.0
-  # Wake lock (keep CPU alive during alarm)
-  wakelock_plus: ^1.2.8
   # Shared preferences (lightweight local settings)
   shared_preferences: ^2.3.2
-  # Charts for price history
-  fl_chart: ^0.69.0
-  # Nice loading spinner
-  shimmer: ^3.0.0
   # Vibration
   vibration: ^2.0.0
   # Intl for number formatting
