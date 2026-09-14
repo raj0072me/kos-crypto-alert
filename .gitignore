@@ -29,3 +29,6 @@ update.MD
 # OS
 .DS_Store
 Thumbs.db
+
+kos-crypto-alert.apk
+dist/mobile-apk/

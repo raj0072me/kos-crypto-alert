@@ -32,9 +32,12 @@ jobs:
       - name: 🛠️ Configure Android Platform
         working-directory: mobile
         run: |
+          mkdir -p /tmp/res_backup
+          cp -r android/app/src/main/res/* /tmp/res_backup/ || true
           cp android/app/src/main/AndroidManifest.xml /tmp/AndroidManifest.xml || true
           flutter create --platforms=android --org com.kanta .
           cp /tmp/AndroidManifest.xml android/app/src/main/AndroidManifest.xml || true
+          cp -r /tmp/res_backup/* android/app/src/main/res/ || true
 
       - name: 📦 Install Flutter dependencies
         working-directory: mobile

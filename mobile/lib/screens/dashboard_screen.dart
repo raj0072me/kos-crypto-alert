@@ -250,8 +250,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       appBar: AppBar(
         title: Row(
           children: [
-            const Icon(Icons.show_chart_rounded, color: primary, size: 24),
-            const SizedBox(width: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.asset('assets/images/logo.png', width: 28, height: 28),
+            ),
+            const SizedBox(width: 10),
             Text(widget.session.displayName),
           ],
         ),
@@ -321,7 +324,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.currency_bitcoin_rounded, size: 64, color: textMuted.withOpacity(0.5)),
+                            Opacity(
+                              opacity: 0.7,
+                              child: Image.asset('assets/images/logo.png', width: 72, height: 72),
+                            ),
                             const SizedBox(height: 12),
                             const Text('No coins added yet', style: TextStyle(color: textMuted, fontSize: 16)),
                             const SizedBox(height: 8),

@@ -97,13 +97,9 @@ class _AddAlertDialogState extends State<AddAlertDialog> {
       ),
       title: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: primary.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.add_alert_rounded, color: primary, size: 20),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.asset('assets/images/logo.png', width: 26, height: 26),
           ),
           const SizedBox(width: 10),
           Text(

@@ -91,17 +91,26 @@ class _LoginScreenState extends State<LoginScreen> {
                 // Logo / Icon
                 Center(
                   child: Container(
-                    width: 88,
-                    height: 88,
+                    width: 96,
+                    height: 96,
                     decoration: BoxDecoration(
-                      color: primary.withOpacity(0.12),
                       shape: BoxShape.circle,
-                      border: Border.all(color: primary.withOpacity(0.4), width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: primary.withOpacity(0.25),
+                          blurRadius: 20,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
-                    child: const Icon(
-                      Icons.notifications_active_rounded,
-                      size: 46,
-                      color: primary,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(48),
+                      child: Image.asset(
+                        'assets/images/logo.png',
+                        width: 96,
+                        height: 96,
+                        fit: BoxFit.contain,
+                      ),
                     ),
                   ),
                 ),
