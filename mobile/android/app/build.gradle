@@ -24,7 +24,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.kanta.kos_crypto_alerts"
-    compileSdk 34
+    compileSdk 35
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -44,7 +44,7 @@ android {
     defaultConfig {
         applicationId "com.kanta.kos_crypto_alerts"
         minSdkVersion 23
-        targetSdkVersion 34
+        targetSdkVersion 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
