@@ -76,7 +76,7 @@ If you prefer to run from Python source code:
 cd c:\Users\raj00\OneDrive\Desktop\temp_apps\crypto_checker
 
 # 2. Install dependencies
-pip install -r requirements.txt
+pip install -r requirements-desktop.txt
 
 # 3. Start the application
 python main.py
@@ -102,7 +102,7 @@ python -m venv venv
 
 ### Step 3: Install Required Dependencies
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-desktop.txt
 ```
 
 This installs:

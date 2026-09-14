@@ -1,0 +1,11 @@
+customtkinter
+requests
+pygame
+matplotlib
+mplfinance
+plyer
+pandas
+Pillow
+psycopg2-binary
+bcrypt
+pyinstaller

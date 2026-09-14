@@ -64,7 +64,7 @@ cd kos-crypto-alert
 
 ### 2. Install dependencies
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-desktop.txt
 ```
 
 ### 3. Run the application
@@ -96,7 +96,8 @@ kos-crypto-alert/
 │   └── coin_icons/                  # Cached cryptocurrency logos
 ├── kos-crypto-alert-icon.png        # App branding asset
 ├── Kantas_Crypto_Alerts.spec        # PyInstaller specification file
-├── requirements.txt                 # Python dependencies
+├── requirements-desktop.txt         # Desktop Python dependencies
+├── requirements.txt                 # Web host stub (empty for static deployment)
 ├── HOW_TO_RUN.md                    # Setup and usage manual
 └── README.md
 ```

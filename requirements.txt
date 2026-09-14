@@ -1,11 +1,4 @@
-customtkinter
-requests
-pygame
-matplotlib
-mplfinance
-plyer
-pandas
-Pillow
-psycopg2-binary
-bcrypt
-pyinstaller
+# Kanta's Crypto Alerts - Web Landing Page
+# Note: This file is intentionally empty of packages so web hosts (Netlify / Cloudflare) do not build desktop C-extensions.
+# For local desktop development, install requirements-desktop.txt:
+#   pip install -r requirements-desktop.txt
