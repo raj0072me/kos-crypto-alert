@@ -1,0 +1,47 @@
+name: kos_crypto_alerts
+description: KoS Crypto Alerts - Native Android App with NeonDB sync and lock-screen alarms.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.1.0 <4.0.0'
+  flutter: '>=3.13.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # HTTP requests (Binance API + NeonDB REST)
+  http: ^1.2.1
+  # Local push notifications (alarm banners, lock-screen)
+  flutter_local_notifications: ^17.2.2
+  # Background periodic tasks even when screen is off
+  workmanager: ^0.5.2
+  # Secure storage for session token
+  flutter_secure_storage: ^9.2.2
+  # Audio playback for alarm sound
+  audioplayers: ^6.0.0
+  # Wake lock (keep CPU alive during alarm)
+  wakelock_plus: ^1.2.8
+  # Shared preferences (lightweight local settings)
+  shared_preferences: ^2.3.2
+  # Keep screen on during alarm
+  screen_keep_on: ^1.0.0
+  # Charts for price history
+  fl_chart: ^0.69.0
+  # Nice loading spinner
+  shimmer: ^3.0.0
+  # Vibration
+  vibration: ^2.0.0
+  # Intl for number formatting
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sounds/alert.mp3
+    - assets/images/logo.png
